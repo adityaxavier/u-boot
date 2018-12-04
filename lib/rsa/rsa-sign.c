@@ -1,7 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 2013, Google Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include "mkimage.h"
@@ -9,6 +8,7 @@
 #include <string.h>
 #include <image.h>
 #include <time.h>
+#include <openssl/bn.h>
 #include <openssl/rsa.h>
 #include <openssl/pem.h>
 #include <openssl/err.h>
@@ -18,6 +18,20 @@
 
 #if OPENSSL_VERSION_NUMBER >= 0x10000000L
 #define HAVE_ERR_REMOVE_THREAD_STATE
+#endif
+
+#if OPENSSL_VERSION_NUMBER < 0x10100000L || \
+	(defined(LIBRESSL_VERSION_NUMBER) && LIBRESSL_VERSION_NUMBER < 0x02070000fL)
+static void RSA_get0_key(const RSA *r,
+                 const BIGNUM **n, const BIGNUM **e, const BIGNUM **d)
+{
+   if (n != NULL)
+       *n = r->n;
+   if (e != NULL)
+       *e = r->e;
+   if (d != NULL)
+       *d = r->d;
+}
 #endif
 
 static int rsa_err(const char *msg)
@@ -286,16 +300,24 @@ static int rsa_init(void)
 {
 	int ret;
 
+#if OPENSSL_VERSION_NUMBER < 0x10100000L || \
+	(defined(LIBRESSL_VERSION_NUMBER) && LIBRESSL_VERSION_NUMBER < 0x02070000fL)
 	ret = SSL_library_init();
+#else
+	ret = OPENSSL_init_ssl(0, NULL);
+#endif
 	if (!ret) {
 		fprintf(stderr, "Failure to init SSL library\n");
 		return -1;
 	}
+#if OPENSSL_VERSION_NUMBER < 0x10100000L || \
+	(defined(LIBRESSL_VERSION_NUMBER) && LIBRESSL_VERSION_NUMBER < 0x02070000fL)
 	SSL_load_error_strings();
 
 	OpenSSL_add_all_algorithms();
 	OpenSSL_add_all_digests();
 	OpenSSL_add_all_ciphers();
+#endif
 
 	return 0;
 }
@@ -335,12 +357,17 @@ err_set_rsa:
 err_engine_init:
 	ENGINE_free(e);
 err_engine_by_id:
+#if OPENSSL_VERSION_NUMBER < 0x10100000L || \
+	(defined(LIBRESSL_VERSION_NUMBER) && LIBRESSL_VERSION_NUMBER < 0x02070000fL)
 	ENGINE_cleanup();
+#endif
 	return ret;
 }
 
 static void rsa_remove(void)
 {
+#if OPENSSL_VERSION_NUMBER < 0x10100000L || \
+	(defined(LIBRESSL_VERSION_NUMBER) && LIBRESSL_VERSION_NUMBER < 0x02070000fL)
 	CRYPTO_cleanup_all_ex_data();
 	ERR_free_strings();
 #ifdef HAVE_ERR_REMOVE_THREAD_STATE
@@ -349,6 +376,7 @@ static void rsa_remove(void)
 	ERR_remove_state(0);
 #endif
 	EVP_cleanup();
+#endif
 }
 
 static void rsa_engine_remove(ENGINE *e)
@@ -359,13 +387,16 @@ static void rsa_engine_remove(ENGINE *e)
 	}
 }
 
-static int rsa_sign_with_key(RSA *rsa, struct checksum_algo *checksum_algo,
+static int rsa_sign_with_key(RSA *rsa, struct padding_algo *padding_algo,
+			     struct checksum_algo *checksum_algo,
 		const struct image_region region[], int region_count,
 		uint8_t **sigp, uint *sig_size)
 {
 	EVP_PKEY *key;
+	EVP_PKEY_CTX *ckey;
 	EVP_MD_CTX *context;
-	int size, ret = 0;
+	int ret = 0;
+	size_t size;
 	uint8_t *sig;
 	int i;
 
@@ -381,7 +412,7 @@ static int rsa_sign_with_key(RSA *rsa, struct checksum_algo *checksum_algo,
 	size = EVP_PKEY_size(key);
 	sig = malloc(size);
 	if (!sig) {
-		fprintf(stderr, "Out of memory for signature (%d bytes)\n",
+		fprintf(stderr, "Out of memory for signature (%zu bytes)\n",
 			size);
 		ret = -ENOMEM;
 		goto err_alloc;
@@ -393,27 +424,53 @@ static int rsa_sign_with_key(RSA *rsa, struct checksum_algo *checksum_algo,
 		goto err_create;
 	}
 	EVP_MD_CTX_init(context);
-	if (!EVP_SignInit(context, checksum_algo->calculate_sign())) {
+
+	ckey = EVP_PKEY_CTX_new(key, NULL);
+	if (!ckey) {
+		ret = rsa_err("EVP key context creation failed");
+		goto err_create;
+	}
+
+	if (EVP_DigestSignInit(context, &ckey,
+			       checksum_algo->calculate_sign(),
+			       NULL, key) <= 0) {
 		ret = rsa_err("Signer setup failed");
 		goto err_sign;
 	}
 
+#ifdef CONFIG_FIT_ENABLE_RSASSA_PSS_SUPPORT
+	if (padding_algo && !strcmp(padding_algo->name, "pss")) {
+		if (EVP_PKEY_CTX_set_rsa_padding(ckey,
+						 RSA_PKCS1_PSS_PADDING) <= 0) {
+			ret = rsa_err("Signer padding setup failed");
+			goto err_sign;
+		}
+	}
+#endif /* CONFIG_FIT_ENABLE_RSASSA_PSS_SUPPORT */
+
 	for (i = 0; i < region_count; i++) {
-		if (!EVP_SignUpdate(context, region[i].data, region[i].size)) {
+		if (!EVP_DigestSignUpdate(context, region[i].data,
+					  region[i].size)) {
 			ret = rsa_err("Signing data failed");
 			goto err_sign;
 		}
 	}
 
-	if (!EVP_SignFinal(context, sig, sig_size, key)) {
+	if (!EVP_DigestSignFinal(context, sig, &size)) {
 		ret = rsa_err("Could not obtain signature");
 		goto err_sign;
 	}
-	EVP_MD_CTX_cleanup(context);
+
+	#if OPENSSL_VERSION_NUMBER < 0x10100000L || \
+		(defined(LIBRESSL_VERSION_NUMBER) && LIBRESSL_VERSION_NUMBER < 0x02070000fL)
+		EVP_MD_CTX_cleanup(context);
+	#else
+		EVP_MD_CTX_reset(context);
+	#endif
 	EVP_MD_CTX_destroy(context);
 	EVP_PKEY_free(key);
 
-	debug("Got signature: %d bytes, expected %d\n", *sig_size, size);
+	debug("Got signature: %d bytes, expected %zu\n", *sig_size, size);
 	*sigp = sig;
 	*sig_size = size;
 
@@ -450,7 +507,7 @@ int rsa_sign(struct image_sign_info *info,
 	ret = rsa_get_priv_key(info->keydir, info->keyname, e, &rsa);
 	if (ret)
 		goto err_priv;
-	ret = rsa_sign_with_key(rsa, info->checksum, region,
+	ret = rsa_sign_with_key(rsa, info->padding, info->checksum, region,
 				region_count, sigp, sig_len);
 	if (ret)
 		goto err_sign;
@@ -479,6 +536,7 @@ static int rsa_get_exponent(RSA *key, uint64_t *e)
 {
 	int ret;
 	BIGNUM *bn_te;
+	const BIGNUM *key_e;
 	uint64_t te;
 
 	ret = -EINVAL;
@@ -487,17 +545,18 @@ static int rsa_get_exponent(RSA *key, uint64_t *e)
 	if (!e)
 		goto cleanup;
 
-	if (BN_num_bits(key->e) > 64)
+	RSA_get0_key(key, NULL, &key_e, NULL);
+	if (BN_num_bits(key_e) > 64)
 		goto cleanup;
 
-	*e = BN_get_word(key->e);
+	*e = BN_get_word(key_e);
 
-	if (BN_num_bits(key->e) < 33) {
+	if (BN_num_bits(key_e) < 33) {
 		ret = 0;
 		goto cleanup;
 	}
 
-	bn_te = BN_dup(key->e);
+	bn_te = BN_dup(key_e);
 	if (!bn_te)
 		goto cleanup;
 
@@ -527,6 +586,7 @@ int rsa_get_params(RSA *key, uint64_t *exponent, uint32_t *n0_invp,
 {
 	BIGNUM *big1, *big2, *big32, *big2_32;
 	BIGNUM *n, *r, *r_squared, *tmp;
+	const BIGNUM *key_n;
 	BN_CTX *bn_ctx = BN_CTX_new();
 	int ret = 0;
 
@@ -548,7 +608,8 @@ int rsa_get_params(RSA *key, uint64_t *exponent, uint32_t *n0_invp,
 	if (0 != rsa_get_exponent(key, exponent))
 		ret = -1;
 
-	if (!BN_copy(n, key->n) || !BN_set_word(big1, 1L) ||
+	RSA_get0_key(key, &key_n, NULL, NULL);
+	if (!BN_copy(n, key_n) || !BN_set_word(big1, 1L) ||
 	    !BN_set_word(big2, 2L) || !BN_set_word(big32, 32L))
 		ret = -1;
 
@@ -604,6 +665,15 @@ static int fdt_add_bignum(void *blob, int noffset, const char *prop_name,
 	big2 = BN_new();
 	big32 = BN_new();
 	big2_32 = BN_new();
+
+	/*
+	 * Note: This code assumes that all of the above succeed, or all fail.
+	 * In practice memory allocations generally do not fail (unless the
+	 * process is killed), so it does not seem worth handling each of these
+	 * as a separate case. Technicaly this could leak memory on failure,
+	 * but a) it won't happen in practice, and b) it doesn't matter as we
+	 * will immediately exit with a failure code.
+	 */
 	if (!tmp || !big2 || !big32 || !big2_32) {
 		fprintf(stderr, "Out of memory (bignum)\n");
 		return -ENOMEM;
@@ -636,15 +706,13 @@ static int fdt_add_bignum(void *blob, int noffset, const char *prop_name,
 	 * might fail several times
 	 */
 	ret = fdt_setprop(blob, noffset, prop_name, buf, size);
-	if (ret)
-		return -FDT_ERR_NOSPACE;
 	free(buf);
 	BN_free(tmp);
 	BN_free(big2);
 	BN_free(big32);
 	BN_free(big2_32);
 
-	return ret;
+	return ret ? -FDT_ERR_NOSPACE : 0;
 }
 
 int rsa_add_verify_data(struct image_sign_info *info, void *keydest)

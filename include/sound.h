@@ -1,8 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright (C) 2012 Samsung Electronics
  * R. Chandrasekar < rcsekar@samsung.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef __SOUND_H__
@@ -32,11 +31,13 @@ struct sound_codec_info {
 /*
  * Generates square wave sound data for 1 second
  *
+ * @param sample_rate   Sample rate in Hz
  * @param data          data buffer pointer
  * @param size          size of the buffer
  * @param freq          frequency of the wave
  */
-void sound_create_square_wave(unsigned short *data, int size, uint32_t freq);
+void sound_create_square_wave(uint sample_rate, unsigned short *data, int size,
+			      uint freq);
 
 /*
  * Initialises audio sub system

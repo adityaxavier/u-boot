@@ -1,8 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2000, 2001
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /*
@@ -68,16 +67,14 @@ __weak int eeprom_write_enable(unsigned dev_addr, int state)
 void eeprom_init(int bus)
 {
 	/* SPI EEPROM */
-#if defined(CONFIG_SPI) && !defined(CONFIG_ENV_EEPROM_IS_ON_I2C)
+#if defined(CONFIG_MPC8XX_SPI) && !defined(CONFIG_ENV_EEPROM_IS_ON_I2C)
 	spi_init_f();
 #endif
 
 	/* I2C EEPROM */
-#if defined(CONFIG_HARD_I2C) || defined(CONFIG_SYS_I2C)
 #if defined(CONFIG_SYS_I2C)
 	if (bus >= 0)
 		i2c_set_bus_num(bus);
-#endif
 	i2c_init(CONFIG_SYS_I2C_SPEED, CONFIG_SYS_I2C_SLAVE);
 #endif
 }
@@ -133,13 +130,30 @@ static int eeprom_rw_block(unsigned offset, uchar *addr, unsigned alen,
 	int ret = 0;
 
 	/* SPI */
-#if defined(CONFIG_SPI) && !defined(CONFIG_ENV_EEPROM_IS_ON_I2C)
+#if defined(CONFIG_MPC8XX_SPI) && !defined(CONFIG_ENV_EEPROM_IS_ON_I2C)
 	if (read)
 		spi_read(addr, alen, buffer, len);
 	else
 		spi_write(addr, alen, buffer, len);
 #else	/* I2C */
 
+#if defined(CONFIG_DM_I2C) && defined(CONFIG_SYS_I2C_EEPROM_BUS)
+	struct udevice *dev;
+
+	ret = i2c_get_chip_for_busnum(CONFIG_SYS_I2C_EEPROM_BUS, addr[0],
+				      alen - 1, &dev);
+	if (ret) {
+		printf("%s: Cannot find udev for a bus %d\n", __func__,
+		       CONFIG_SYS_I2C_EEPROM_BUS);
+		return CMD_RET_FAILURE;
+	}
+
+	if (read)
+		ret = dm_i2c_read(dev, offset, buffer, len);
+	else
+		ret = dm_i2c_write(dev, offset, buffer, len);
+
+#else /* Non DM I2C support - will be removed */
 #if defined(CONFIG_SYS_I2C_EEPROM_BUS)
 	i2c_set_bus_num(CONFIG_SYS_I2C_EEPROM_BUS);
 #endif
@@ -148,10 +162,11 @@ static int eeprom_rw_block(unsigned offset, uchar *addr, unsigned alen,
 		ret = i2c_read(addr[0], offset, alen - 1, buffer, len);
 	else
 		ret = i2c_write(addr[0], offset, alen - 1, buffer, len);
-
-	if (ret)
-		ret = 1;
 #endif
+#endif /* CONFIG_DM_I2C && CONFIG_SYS_I2C_EEPROM_BUS */
+	if (ret)
+		ret = CMD_RET_FAILURE;
+
 	return ret;
 }
 
@@ -266,10 +281,6 @@ __weak int eeprom_parse_layout_version(char *str)
 }
 
 static unsigned char eeprom_buf[CONFIG_SYS_EEPROM_SIZE];
-
-#ifndef CONFIG_EEPROM_LAYOUT_HELP_STRING
-#define CONFIG_EEPROM_LAYOUT_HELP_STRING "<not defined>"
-#endif
 
 #endif
 

@@ -1,9 +1,9 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  *	LiMon Monitor (LiMon) - Network.
  *
  *	Copyright 1994 - 2000 Neil Russell.
  *	(See License)
- *	SPDX-License-Identifier:	GPL-2.0
  *
  * History
  *	9/16/00	  bor  adapted to TQM823L/STK8xxL board, RARP/TFTP boot added
@@ -12,12 +12,9 @@
 #ifndef __NET_H__
 #define __NET_H__
 
-#if defined(CONFIG_8xx)
-#include <commproc.h>
-#endif	/* CONFIG_8xx */
-
 #include <asm/cache.h>
 #include <asm/byteorder.h>	/* for nton* / ntoh* stuff */
+#include <linux/if_ether.h>
 
 #define DEBUG_LL_STATE 0	/* Link local state machine changes */
 #define DEBUG_DEV_PKT 0		/* Packets or info directed to the device */
@@ -168,7 +165,7 @@ void eth_halt_state_only(void); /* Set passive state */
 
 #ifndef CONFIG_DM_ETH
 struct eth_device {
-#define ETH_NAME_LEN 16
+#define ETH_NAME_LEN 20
 	char name[ETH_NAME_LEN];
 	unsigned char enetaddr[ARP_HLEN];
 	phys_addr_t iobase;
@@ -242,12 +239,9 @@ void eth_try_another(int first_restart);	/* Change the device */
 void eth_set_current(void);		/* set nterface to ethcur var */
 
 int eth_get_dev_index(void);		/* get the device index */
-void eth_parse_enetaddr(const char *addr, uchar *enetaddr);
-int eth_getenv_enetaddr(const char *name, uchar *enetaddr);
-int eth_setenv_enetaddr(const char *name, const uchar *enetaddr);
 
 /**
- * eth_setenv_enetaddr_by_index() - set the MAC address environment variable
+ * eth_env_set_enetaddr_by_index() - set the MAC address environment variable
  *
  * This sets up an environment variable with the given MAC address (@enetaddr).
  * The environment variable to be set is defined by <@base_name><@index>addr.
@@ -259,7 +253,7 @@ int eth_setenv_enetaddr(const char *name, const uchar *enetaddr);
  * @enetaddr:   Pointer to MAC address to put into the variable
  * @return 0 if OK, other value on error
  */
-int eth_setenv_enetaddr_by_index(const char *base_name, int index,
+int eth_env_set_enetaddr_by_index(const char *base_name, int index,
 				 uchar *enetaddr);
 
 
@@ -279,7 +273,7 @@ int usb_ether_init(void);
  * Returns:
  *	Return true if the address is valid.
  */
-int eth_getenv_enetaddr_by_index(const char *base_name, int index,
+int eth_env_get_enetaddr_by_index(const char *base_name, int index,
 				 uchar *enetaddr);
 
 int eth_init(void);			/* Initialize the device */
@@ -312,7 +306,7 @@ struct ethernet_hdr {
 	u8		et_dest[ARP_HLEN];	/* Destination node	*/
 	u8		et_src[ARP_HLEN];	/* Source node		*/
 	u16		et_protlen;		/* Protocol or length	*/
-};
+} __attribute__((packed));
 
 /* Ethernet header size */
 #define ETHER_HDR_SIZE	(sizeof(struct ethernet_hdr))
@@ -330,7 +324,7 @@ struct e802_hdr {
 	u8		et_snap2;
 	u8		et_snap3;
 	u16		et_prot;		/* 802 protocol		*/
-};
+} __attribute__((packed));
 
 /* 802 + SNAP + ethernet header size */
 #define E802_HDR_SIZE	(sizeof(struct e802_hdr))
@@ -344,13 +338,14 @@ struct vlan_ethernet_hdr {
 	u16		vet_vlan_type;		/* PROT_VLAN		*/
 	u16		vet_tag;		/* TAG of VLAN		*/
 	u16		vet_type;		/* protocol type	*/
-};
+} __attribute__((packed));
 
 /* VLAN Ethernet header size */
 #define VLAN_ETHER_HDR_SIZE	(sizeof(struct vlan_ethernet_hdr))
 
 #define PROT_IP		0x0800		/* IP protocol			*/
 #define PROT_ARP	0x0806		/* IP ARP protocol		*/
+#define PROT_WOL	0x0842		/* ether-wake WoL protocol	*/
 #define PROT_RARP	0x8035		/* IP ARP protocol		*/
 #define PROT_VLAN	0x8100		/* IEEE 802.1q protocol		*/
 #define PROT_IPV6	0x86dd		/* IPv6 over bluebook		*/
@@ -373,7 +368,7 @@ struct ip_hdr {
 	u16		ip_sum;		/* checksum			*/
 	struct in_addr	ip_src;		/* Source IP address		*/
 	struct in_addr	ip_dst;		/* Destination IP address	*/
-};
+} __attribute__((packed));
 
 #define IP_OFFS		0x1fff /* ip offset *= 8 */
 #define IP_FLAGS	0xe000 /* first 3 bits */
@@ -401,7 +396,7 @@ struct ip_udp_hdr {
 	u16		udp_dst;	/* UDP destination port		*/
 	u16		udp_len;	/* Length of UDP packet		*/
 	u16		udp_xsum;	/* Checksum			*/
-};
+} __attribute__((packed));
 
 #define IP_UDP_HDR_SIZE		(sizeof(struct ip_udp_hdr))
 #define UDP_HDR_SIZE		(IP_UDP_HDR_SIZE - IP_HDR_SIZE)
@@ -439,7 +434,7 @@ struct arp_hdr {
 	u8		ar_tha[];	/* Target hardware address	*/
 	u8		ar_tpa[];	/* Target protocol address	*/
 #endif /* 0 */
-};
+} __attribute__((packed));
 
 #define ARP_HDR_SIZE	(8+20)		/* Size assuming ethernet	*/
 
@@ -474,7 +469,7 @@ struct icmp_hdr {
 		} frag;
 		u8 data[0];
 	} un;
-};
+} __attribute__((packed));
 
 #define ICMP_HDR_SIZE		(sizeof(struct icmp_hdr))
 #define IP_ICMP_HDR_SIZE	(IP_HDR_SIZE + ICMP_HDR_SIZE)
@@ -542,10 +537,12 @@ extern int		net_restart_wrap;	/* Tried all network devices */
 
 enum proto_t {
 	BOOTP, RARP, ARP, TFTPGET, DHCP, PING, DNS, NFS, CDP, NETCONS, SNTP,
-	TFTPSRV, TFTPPUT, LINKLOCAL
+	TFTPSRV, TFTPPUT, LINKLOCAL, FASTBOOT, WOL
 };
 
 extern char	net_boot_file_name[1024];/* Boot File name */
+/* Indicates whether the file name was specified on the command line */
+extern bool	net_boot_file_name_explicit;
 /* The actual transferred size of the bootfile (in bytes) */
 extern u32	net_boot_file_size;
 /* Boot file size in blocks as reported by the DHCP server */
@@ -600,7 +597,8 @@ int net_set_ether(uchar *xet, const uchar *dest_ethaddr, uint prot);
 int net_update_ether(struct ethernet_hdr *et, uchar *addr, uint prot);
 
 /* Set IP header */
-void net_set_ip_header(uchar *pkt, struct in_addr dest, struct in_addr source);
+void net_set_ip_header(uchar *pkt, struct in_addr dest, struct in_addr source,
+		       u16 pkt_len, u8 proto);
 void net_set_udp_header(uchar *pkt, struct in_addr dest, int dport,
 				int sport, int len);
 
@@ -639,6 +637,7 @@ rxhand_f *net_get_udp_handler(void);	/* Get UDP RX packet handler */
 void net_set_udp_handler(rxhand_f *);	/* Set UDP RX packet handler */
 rxhand_f *net_get_arp_handler(void);	/* Get ARP RX packet handler */
 void net_set_arp_handler(rxhand_f *);	/* Set ARP RX packet handler */
+bool arp_is_waiting(void);		/* Waiting for ARP reply? */
 void net_set_icmp_handler(rxhand_icmp_f *f); /* Set ICMP RX handler */
 void net_set_timeout_handler(ulong, thand_f *);/* Set timeout handler */
 
@@ -657,6 +656,14 @@ static inline void net_set_state(enum net_loop_state state)
 	net_state = state;
 }
 
+/*
+ * net_get_async_tx_pkt_buf - Get a packet buffer that is not in use for
+ *			      sending an asynchronous reply
+ *
+ * returns - ptr to packet buffer
+ */
+uchar * net_get_async_tx_pkt_buf(void);
+
 /* Transmit a packet */
 static inline void net_send_packet(uchar *pkt, int len)
 {
@@ -674,13 +681,16 @@ static inline void net_send_packet(uchar *pkt, int len)
  * @param sport Source UDP port
  * @param payload_len Length of data after the UDP header
  */
+int net_send_ip_packet(uchar *ether, struct in_addr dest, int dport, int sport,
+		       int payload_len, int proto, u8 action, u32 tcp_seq_num,
+		       u32 tcp_ack_num);
 int net_send_udp_packet(uchar *ether, struct in_addr dest, int dport,
 			int sport, int payload_len);
 
 /* Processes a received packet */
 void net_process_received_packet(uchar *in_packet, int len);
 
-#ifdef CONFIG_NETCONSOLE
+#if defined(CONFIG_NETCONSOLE) && !defined(CONFIG_SPL_BUILD)
 void nc_start(void);
 int nc_input_packet(uchar *pkt, struct in_addr src_ip, unsigned dest_port,
 	unsigned src_port, unsigned len);
@@ -688,7 +698,7 @@ int nc_input_packet(uchar *pkt, struct in_addr src_ip, unsigned dest_port,
 
 static __always_inline int eth_is_on_demand_init(void)
 {
-#ifdef CONFIG_NETCONSOLE
+#if defined(CONFIG_NETCONSOLE) && !defined(CONFIG_SPL_BUILD)
 	extern enum proto_t net_loop_last_protocol;
 
 	return net_loop_last_protocol != NETCONS;
@@ -699,7 +709,7 @@ static __always_inline int eth_is_on_demand_init(void)
 
 static inline void eth_set_last_protocol(int protocol)
 {
-#ifdef CONFIG_NETCONSOLE
+#if defined(CONFIG_NETCONSOLE) && !defined(CONFIG_SPL_BUILD)
 	extern enum proto_t net_loop_last_protocol;
 
 	net_loop_last_protocol = protocol;
@@ -838,10 +848,24 @@ void vlan_to_string(ushort x, char *s);
 ushort string_to_vlan(const char *s);
 
 /* read a VLAN id from an environment variable */
-ushort getenv_vlan(char *);
+ushort env_get_vlan(char *);
 
 /* copy a filename (allow for "..." notation, limit length) */
 void copy_filename(char *dst, const char *src, int size);
+
+/* check if serverip is specified in filename from the command line */
+int is_serverip_in_cmd(void);
+
+/**
+ * net_parse_bootfile - Parse the bootfile env var / cmd line param
+ *
+ * @param ipaddr - a pointer to the ipaddr to populate if included in bootfile
+ * @param filename - a pointer to the string to save the filename part
+ * @param max_len - The longest - 1 that the filename part can be
+ *
+ * return 1 if parsed, 0 if bootfile is empty
+ */
+int net_parse_bootfile(struct in_addr *ipaddr, char *filename, int max_len);
 
 /* get a random source port */
 unsigned int random_port(void);

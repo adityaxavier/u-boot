@@ -1,14 +1,13 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2012 Samsung Electronics
  * R. Chandrasekar <rcsekar@samsung.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <malloc.h>
 #include <common.h>
 #include <asm/io.h>
-#include <libfdt.h>
+#include <linux/libfdt.h>
 #include <fdtdec.h>
 #include <i2c.h>
 #include <i2s.h>
@@ -186,7 +185,8 @@ int sound_play(uint32_t msec, uint32_t frequency)
 		return -1;
 	}
 
-	sound_create_square_wave((unsigned short *)data,
+	sound_create_square_wave(g_i2stx_pri.samplingrate,
+				 (unsigned short *)data,
 				 data_size / sizeof(unsigned short),
 				 frequency);
 
